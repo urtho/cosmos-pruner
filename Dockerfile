@@ -1,17 +1,23 @@
-FROM golang:1.19-alpine as builder
+# syntax=docker/dockerfile:1
+FROM golang:1.25.9 AS builder
 
-RUN apk add --no-cache gcc musl-dev
-RUN apk add --no-cache make
+WORKDIR /src
 
-COPY . /app
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
 
-WORKDIR /app
+COPY . .
 
-RUN make build 
+RUN CGO_ENABLED=0 GOFLAGS="-trimpath" \
+    go build -ldflags="-s -w" -o /out/cosmprund ./
 
+FROM gcr.io/distroless/static:nonroot
 
-FROM alpine
+LABEL org.opencontainers.image.source="https://github.com/binaryholdings/cosmos-pruner"
+LABEL org.opencontainers.image.description="cosmprund - prunes data history from a Cosmos SDK / CometBFT node"
 
-COPY --from=builder /app/build/cosmos-pruner /usr/bin/cosmprund
+COPY --from=builder --chown=nonroot:nonroot /out/cosmprund /usr/local/bin/cosmprund
 
-ENTRYPOINT [ "/usr/bin/cosmprund" ]
+USER nonroot:nonroot
+
+ENTRYPOINT ["/usr/local/bin/cosmprund"]

@@ -1,9 +1,10 @@
 all: install
 
-LD_FLAGS = -w -s -X github.com/cosmos/cosmos-sdk/types.DBBackend=pebbledb
-
+LD_FLAGS = -w -s
 
 BUILD_FLAGS := -ldflags '$(LD_FLAGS)'
+
+IMAGE ?= cosmprund:latest
 
 build:
 	@echo "Building cosmos-pruner"
@@ -13,7 +14,10 @@ install:
 	@echo "Installing cosmos-pruner"
 	@go install -tags pebbledb -mod readonly $(BUILD_FLAGS) ./...
 
+docker:
+	docker buildx build --sbom=true --provenance=true --platform linux/amd64 -t $(IMAGE) --push .
+
 clean:
 	rm -rf build
 
-.PHONY: all lint test race msan tools clean build
+.PHONY: all build install docker clean

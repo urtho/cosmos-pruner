@@ -18,6 +18,8 @@ var (
 	versions   uint64
 	tx_idx     bool
 	compact    bool
+	quiet      bool
+	verbose    bool
 	appName    = "cosmprund"
 )
 
@@ -30,11 +32,7 @@ func NewRootCmd() *cobra.Command {
 	}
 
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		// reads `homeDir/config.yaml` into `var config *Config` before each command
-		// if err := initConfig(rootCmd); err != nil {
-		// 	return err
-		// }
-
+		setLogLevel()
 		return nil
 	}
 
@@ -79,6 +77,12 @@ func NewRootCmd() *cobra.Command {
 
 	// --compact flag
 	rootCmd.PersistentFlags().BoolVar(&compact, "compact", true, "set to false you dont want to compact dbs after prunning (default true)")
+
+	// --quiet flag (errors only)
+	rootCmd.PersistentFlags().BoolVar(&quiet, "quiet", false, "suppress all non-error output")
+
+	// --verbose flag (debug-level; on by default)
+	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", true, "enable detailed debug output (default true)")
 
 	rootCmd.AddCommand(
 		pruneCmd(),
