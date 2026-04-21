@@ -22,7 +22,7 @@ make build
 Flags: 
 
 - `data-dir`: path to data directory if not d efault
-- `blocks`: amount of blocks to keep on the node (Default 10000)
+- `blocks`: amount of blocks to keep on the node (Default 1000)
 - `versions`: amount of app state versions to keep on the node (Default 10)
 - `app`: deprecated! does not use for anything exccep some special chains.
 - `cosmos-sdk`: If pruning app state (Default true)

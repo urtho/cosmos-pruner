@@ -36,7 +36,7 @@ func NewRootCmd() *cobra.Command {
 		return nil
 	}
 
-	rootCmd.PersistentFlags().Uint64VarP(&blocks, "blocks", "b", 10000, "amount of blocks to keep")
+	rootCmd.PersistentFlags().Uint64VarP(&blocks, "blocks", "b", 1000, "amount of blocks to keep")
 	if err := viper.BindPFlag("blocks", rootCmd.PersistentFlags().Lookup("blocks")); err != nil {
 		panic(err)
 	}

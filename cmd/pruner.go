@@ -37,6 +37,12 @@ func pruneCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home := args[0]
 
+			if tx_idx {
+				if err := pruneTxIndex(home); err != nil {
+					logErr("tx_index pruning failed: %s", err.Error())
+				}
+			}
+
 			if tendermint {
 				if err := pruneTMData(home); err != nil {
 					logErr("tendermint pruning failed: %s", err.Error())
@@ -46,12 +52,6 @@ func pruneCmd() *cobra.Command {
 			if cosmosSdk {
 				if err := pruneAppState(home); err != nil {
 					logErr("app state pruning failed: %s", err.Error())
-				}
-			}
-
-			if tx_idx {
-				if err := pruneTxIndex(home); err != nil {
-					logErr("tx_index pruning failed: %s", err.Error())
 				}
 			}
 
@@ -112,10 +112,6 @@ func inspectAppState(appDB cosmosdb.DB) (*appPlan, error) {
 }
 
 func pruneAppState(home string) error {
-	if app == "osmosis" {
-		logInfo("application store: osmosis app state pruning not supported, skipping")
-		return nil
-	}
 
 	if !dbExists(home, "application") {
 		logWarn("application store: application.db not found, skipping")
@@ -327,6 +323,19 @@ func pruneTxIndex(home string) error {
 		return nil
 	}
 
+	if txIdxHeight <= 0 {
+		h, err := resolveTxIdxHeight(home)
+		if err != nil {
+			return fmt.Errorf("resolve reference height: %w", err)
+		}
+		if h == 0 {
+			logWarn("tx_index: no reference height (blockstore/application absent), skipping")
+			return nil
+		}
+		txIdxHeight = h
+		logDebug("tx_index: resolved txIdxHeight=%d", txIdxHeight)
+	}
+
 	pruneHeight := txIdxHeight - int64(blocks) - 10
 	logInfo("tx_index: txIdxHeight=%d, keep=%d, pruneTo=%d", txIdxHeight, blocks, pruneHeight)
 	if pruneHeight <= 0 {
@@ -340,13 +349,10 @@ func pruneTxIndex(home string) error {
 	}
 	defer txIdxDB.Close()
 
-	logInfo("tx_index: pruning block index entries below %d", pruneHeight)
-	deleted, kept := pruneBlockIndex(txIdxDB, pruneHeight)
-	logInfo("tx_index: block index — deleted %d, kept %d entries", deleted, kept)
-
-	logInfo("tx_index: pruning tx index entries below %d", pruneHeight)
-	deleted, kept = pruneTxIndexTxs(txIdxDB, pruneHeight)
-	logInfo("tx_index: tx index — deleted %d, kept %d entries", deleted, kept)
+	logInfo("tx_index: pruning block+tx index entries below %d", pruneHeight)
+	r := pruneIndex(txIdxDB, pruneHeight)
+	logInfo("tx_index: block deleted=%d kept=%d | tx deleted=%d kept=%d | other=%d",
+		r.blockDeleted, r.blockNotDeleted, r.txDeleted, r.txNotDeleted, r.kept)
 
 	if compact {
 		logInfo("tx_index: compacting")
@@ -358,111 +364,115 @@ func pruneTxIndex(home string) error {
 	return nil
 }
 
-func pruneTxIndexTxs(db cmtdb.DB, pruneHeight int64) (int64, int64) {
+// indexStats tracks the outcome of a single pruneIndex pass. Matched-but-kept
+// entries (*NotDeleted) reflect current retention; `kept` covers entries that
+// didn't match any index rule.
+type indexStats struct {
+	blockDeleted    int64
+	blockNotDeleted int64
+	txDeleted       int64
+	txNotDeleted    int64
+	kept            int64
+}
+
+// pruneIndex iterates tx_index.db once and prunes both block and tx index
+// entries whose height is below pruneHeight.
+func pruneIndex(db cmtdb.DB, pruneHeight int64) indexStats {
 	itr, err := db.Iterator(nil, nil)
 	if err != nil {
 		panic(err)
 	}
 	defer itr.Close()
 
+	var s indexStats
 	bat := db.NewBatch()
 	counter := 0
-	var deleted, kept int64
 
 	for ; itr.Valid(); itr.Next() {
 		key := itr.Key()
 		value := itr.Value()
 		strKey := string(key)
-		deletedThis := false
+		matched := false
 
-		if strings.HasPrefix(strKey, "tx.height") {
+		switch {
+		case strings.HasPrefix(strKey, "block.height"), strings.HasPrefix(strKey, "block_events"):
+			matched = true
+			if int64FromBytes(value) < pruneHeight {
+				_ = bat.Delete(key)
+				counter++
+				s.blockDeleted++
+			} else {
+				s.blockNotDeleted++
+			}
+		case strings.HasPrefix(strKey, "tx.height"):
+			matched = true
 			parts := strings.Split(strKey, "/")
-			intHeight, _ := strconv.ParseInt(parts[2], 10, 64)
-			if intHeight < pruneHeight {
+			if intHeight, _ := strconv.ParseInt(parts[2], 10, 64); intHeight < pruneHeight {
 				_ = bat.Delete(value)
 				_ = bat.Delete(key)
 				counter += 2
-				deletedThis = true
+				s.txDeleted += 2
+			} else {
+				s.txNotDeleted++
 			}
-		} else if len(value) == 32 {
+		case len(value) == 32:
 			parts := strings.Split(strKey, "/")
 			if len(parts) == 4 {
-				intHeight, _ := strconv.ParseInt(parts[2], 10, 64)
-				if intHeight < pruneHeight {
+				matched = true
+				if intHeight, _ := strconv.ParseInt(parts[2], 10, 64); intHeight < pruneHeight {
 					_ = bat.Delete(key)
 					counter++
-					deletedThis = true
+					s.txDeleted++
+				} else {
+					s.txNotDeleted++
 				}
 			}
 		}
-		if !deletedThis {
-			kept++
+		if !matched {
+			s.kept++
 		}
 
 		if counter >= 100000 {
 			_ = bat.WriteSync()
-			deleted += int64(counter)
-			logInline("  tx_index batch flushed: %d (deleted: %d, kept: %d)", counter, deleted, kept)
+			logInline("  tx_index batch flushed: %d (block del=%d kept=%d | tx del=%d kept=%d | other=%d)",
+				counter, s.blockDeleted, s.blockNotDeleted, s.txDeleted, s.txNotDeleted, s.kept)
 			counter = 0
 			_ = bat.Close()
 			bat = db.NewBatch()
 		}
 	}
 
-	deleted += int64(counter)
 	_ = bat.WriteSync()
 	_ = bat.Close()
 	logInlineEnd()
-	return deleted, kept
-}
-
-func pruneBlockIndex(db cmtdb.DB, pruneHeight int64) (int64, int64) {
-	itr, err := db.Iterator(nil, nil)
-	if err != nil {
-		panic(err)
-	}
-	defer itr.Close()
-
-	bat := db.NewBatch()
-	counter := 0
-	var deleted, kept int64
-
-	for ; itr.Valid(); itr.Next() {
-		key := itr.Key()
-		value := itr.Value()
-		strKey := string(key)
-		deletedThis := false
-
-		if strings.HasPrefix(strKey, "block.height") || strings.HasPrefix(strKey, "block_events") {
-			intHeight := int64FromBytes(value)
-			if intHeight < pruneHeight {
-				_ = bat.Delete(key)
-				counter++
-				deletedThis = true
-			}
-		}
-		if !deletedThis {
-			kept++
-		}
-
-		if counter >= 100000 {
-			_ = bat.WriteSync()
-			deleted += int64(counter)
-			logInline("  block_index batch flushed: %d (deleted: %d, kept: %d)", counter, deleted, kept)
-			counter = 0
-			_ = bat.Close()
-			bat = db.NewBatch()
-		}
-	}
-
-	deleted += int64(counter)
-	_ = bat.WriteSync()
-	_ = bat.Close()
-	logInlineEnd()
-	return deleted, kept
+	return s
 }
 
 // --- Sanity / utility ---
+
+// resolveTxIdxHeight returns a reference height for tx_index pruning when it
+// runs standalone (before pruneTMData / pruneAppState seed txIdxHeight).
+// Prefers the cometbft blockstore tip; falls back to the app store's latest
+// committed version. Returns 0 if neither is available.
+func resolveTxIdxHeight(home string) (int64, error) {
+	if dbExists(home, "blockstore") {
+		db, err := openCmtDB("blockstore", home)
+		if err != nil {
+			return 0, fmt.Errorf("open blockstore: %w", err)
+		}
+		defer db.Close()
+		return cmtstore.NewBlockStore(db).Height(), nil
+	}
+	if dbExists(home, "application") {
+		db, err := openCosmosDB("application", home)
+		if err != nil {
+			return 0, fmt.Errorf("open application: %w", err)
+		}
+		defer db.Close()
+		return getLatestVersion(db), nil
+	}
+	return 0, nil
+}
 
 func dbExists(home, name string) bool {
 	dbDir := rootify(dataDir, home)
