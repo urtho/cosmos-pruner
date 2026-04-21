@@ -265,28 +265,6 @@ func pruneTMData(home string) error {
 		logDebug("set txIdxHeight=%d from blockstore", txIdxHeight)
 	}
 
-	totalBlocks := plan.pruneTo - plan.base
-	logInfo("blockstore: pruning %d blocks in batches of %d", totalBlocks, pruneBatchSize)
-	for from := plan.base; from < plan.pruneTo-1; from += pruneBatchSize {
-		target := from + pruneBatchSize
-		if target > plan.pruneTo-1 {
-			target = plan.pruneTo - 1
-		}
-		if _, _, err := blockStore.PruneBlocks(target, plan.state); err != nil {
-			logErr("blockstore prune error at %d: %s", target, err.Error())
-		}
-		done := target - plan.base
-		logInline("  blockstore: %d / %d (%.1f%%)", done, totalBlocks, pct(done, totalBlocks))
-	}
-	logInlineEnd()
-
-	if compact {
-		logInfo("blockstore: compacting")
-		if err := compactCmtDB(blockStoreDB); err != nil {
-			logErr("compact failed: %s", err.Error())
-		}
-	}
-
 	totalStates := plan.pruneTo - plan.base
 	logInfo("statestore: pruning %d states in batches of %d", totalStates, pruneBatchSize)
 	for from := plan.base; from < plan.pruneTo-1; from += pruneBatchSize {
@@ -308,6 +286,28 @@ func pruneTMData(home string) error {
 	if compact {
 		logInfo("statestore: compacting")
 		if err := compactCmtDB(stateDB); err != nil {
+			logErr("compact failed: %s", err.Error())
+		}
+	}
+
+	totalBlocks := plan.pruneTo - plan.base
+	logInfo("blockstore: pruning %d blocks in batches of %d", totalBlocks, pruneBatchSize)
+	for from := plan.base; from < plan.pruneTo-1; from += pruneBatchSize {
+		target := from + pruneBatchSize
+		if target > plan.pruneTo-1 {
+			target = plan.pruneTo - 1
+		}
+		if _, _, err := blockStore.PruneBlocks(target, plan.state); err != nil {
+			logErr("blockstore prune error at %d: %s", target, err.Error())
+		}
+		done := target - plan.base
+		logInline("  blockstore: %d / %d (%.1f%%)", done, totalBlocks, pct(done, totalBlocks))
+	}
+	logInlineEnd()
+
+	if compact {
+		logInfo("blockstore: compacting")
+		if err := compactCmtDB(blockStoreDB); err != nil {
 			logErr("compact failed: %s", err.Error())
 		}
 	}
