@@ -4,7 +4,7 @@ LD_FLAGS = -w -s
 
 BUILD_FLAGS := -ldflags '$(LD_FLAGS)'
 
-IMAGE ?= cosmprund:latest
+IMAGE ?= cosmos-pruner:latest
 
 build:
 	@echo "Building cosmos-pruner"

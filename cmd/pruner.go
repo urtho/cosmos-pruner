@@ -24,7 +24,7 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/opt"
 )
 
-const pruneBatchSize = 1000
+const pruneBatchSize = 10000
 
 // txIdxHeight is the height below which tx/block indexer data will be pruned.
 var txIdxHeight int64 = 0
@@ -279,8 +279,10 @@ func pruneTMData(home string) error {
 		if _, _, err := blockStore.PruneBlocks(target, plan.state); err != nil {
 			logErr("blockstore prune error at %d: %s", target, err.Error())
 		}
-		logProgress("blockstore", target-plan.base, totalBlocks)
+		done := target - plan.base
+		logInline("  blockstore: %d / %d (%.1f%%)", done, totalBlocks, pct(done, totalBlocks))
 	}
+	logInlineEnd()
 
 	if compact {
 		logInfo("blockstore: compacting")
@@ -302,8 +304,10 @@ func pruneTMData(home string) error {
 		if err := stateStore.PruneStates(from, to, plan.evidenceThld); err != nil {
 			logErr("statestore prune error [%d..%d]: %s", from, to, err.Error())
 		}
-		logProgress("statestore", to-plan.base, totalStates)
+		done := to - plan.base
+		logInline("  statestore: %d / %d (%.1f%%)", done, totalStates, pct(done, totalStates))
 	}
+	logInlineEnd()
 
 	if compact {
 		logInfo("statestore: compacting")
@@ -337,12 +341,12 @@ func pruneTxIndex(home string) error {
 	defer txIdxDB.Close()
 
 	logInfo("tx_index: pruning block index entries below %d", pruneHeight)
-	deleted := pruneBlockIndex(txIdxDB, pruneHeight)
-	logInfo("tx_index: deleted %d block index entries", deleted)
+	deleted, kept := pruneBlockIndex(txIdxDB, pruneHeight)
+	logInfo("tx_index: block index — deleted %d, kept %d entries", deleted, kept)
 
 	logInfo("tx_index: pruning tx index entries below %d", pruneHeight)
-	deleted = pruneTxIndexTxs(txIdxDB, pruneHeight)
-	logInfo("tx_index: deleted %d tx index entries", deleted)
+	deleted, kept = pruneTxIndexTxs(txIdxDB, pruneHeight)
+	logInfo("tx_index: tx index — deleted %d, kept %d entries", deleted, kept)
 
 	if compact {
 		logInfo("tx_index: compacting")
@@ -354,7 +358,7 @@ func pruneTxIndex(home string) error {
 	return nil
 }
 
-func pruneTxIndexTxs(db cmtdb.DB, pruneHeight int64) int64 {
+func pruneTxIndexTxs(db cmtdb.DB, pruneHeight int64) (int64, int64) {
 	itr, err := db.Iterator(nil, nil)
 	if err != nil {
 		panic(err)
@@ -363,12 +367,13 @@ func pruneTxIndexTxs(db cmtdb.DB, pruneHeight int64) int64 {
 
 	bat := db.NewBatch()
 	counter := 0
-	var deleted int64
+	var deleted, kept int64
 
 	for ; itr.Valid(); itr.Next() {
 		key := itr.Key()
 		value := itr.Value()
 		strKey := string(key)
+		deletedThis := false
 
 		if strings.HasPrefix(strKey, "tx.height") {
 			parts := strings.Split(strKey, "/")
@@ -377,6 +382,7 @@ func pruneTxIndexTxs(db cmtdb.DB, pruneHeight int64) int64 {
 				_ = bat.Delete(value)
 				_ = bat.Delete(key)
 				counter += 2
+				deletedThis = true
 			}
 		} else if len(value) == 32 {
 			parts := strings.Split(strKey, "/")
@@ -385,14 +391,18 @@ func pruneTxIndexTxs(db cmtdb.DB, pruneHeight int64) int64 {
 				if intHeight < pruneHeight {
 					_ = bat.Delete(key)
 					counter++
+					deletedThis = true
 				}
 			}
 		}
+		if !deletedThis {
+			kept++
+		}
 
-		if counter >= 1000 {
+		if counter >= 100000 {
 			_ = bat.WriteSync()
 			deleted += int64(counter)
-			logDebug("  tx_index batch flushed: %d (running total: %d)", counter, deleted)
+			logInline("  tx_index batch flushed: %d (deleted: %d, kept: %d)", counter, deleted, kept)
 			counter = 0
 			_ = bat.Close()
 			bat = db.NewBatch()
@@ -402,10 +412,11 @@ func pruneTxIndexTxs(db cmtdb.DB, pruneHeight int64) int64 {
 	deleted += int64(counter)
 	_ = bat.WriteSync()
 	_ = bat.Close()
-	return deleted
+	logInlineEnd()
+	return deleted, kept
 }
 
-func pruneBlockIndex(db cmtdb.DB, pruneHeight int64) int64 {
+func pruneBlockIndex(db cmtdb.DB, pruneHeight int64) (int64, int64) {
 	itr, err := db.Iterator(nil, nil)
 	if err != nil {
 		panic(err)
@@ -414,25 +425,30 @@ func pruneBlockIndex(db cmtdb.DB, pruneHeight int64) int64 {
 
 	bat := db.NewBatch()
 	counter := 0
-	var deleted int64
+	var deleted, kept int64
 
 	for ; itr.Valid(); itr.Next() {
 		key := itr.Key()
 		value := itr.Value()
 		strKey := string(key)
+		deletedThis := false
 
 		if strings.HasPrefix(strKey, "block.height") || strings.HasPrefix(strKey, "block_events") {
 			intHeight := int64FromBytes(value)
 			if intHeight < pruneHeight {
 				_ = bat.Delete(key)
 				counter++
+				deletedThis = true
 			}
 		}
+		if !deletedThis {
+			kept++
+		}
 
-		if counter >= 1000 {
+		if counter >= 100000 {
 			_ = bat.WriteSync()
 			deleted += int64(counter)
-			logDebug("  block_index batch flushed: %d (running total: %d)", counter, deleted)
+			logInline("  block_index batch flushed: %d (deleted: %d, kept: %d)", counter, deleted, kept)
 			counter = 0
 			_ = bat.Close()
 			bat = db.NewBatch()
@@ -442,7 +458,8 @@ func pruneBlockIndex(db cmtdb.DB, pruneHeight int64) int64 {
 	deleted += int64(counter)
 	_ = bat.WriteSync()
 	_ = bat.Close()
-	return deleted
+	logInlineEnd()
+	return deleted, kept
 }
 
 // --- Sanity / utility ---

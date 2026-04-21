@@ -13,7 +13,7 @@ flags
 - --db-directory = the dirstory of your db
 
 ```sh
-cosmprund --home <path_to_db> --blocks 10 --versions 4
+cosmos-pruner --home <path_to_db> --blocks 10 --versions 4
 ```
 
 

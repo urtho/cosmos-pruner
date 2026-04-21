@@ -10,19 +10,19 @@ This is a fork of [cosmprund](https://github.com/binaryholdings/cosmprund) with 
 ## Usage
 
 ```
-# clone & build cosmprund repo
+# clone & build cosmos-pruner repo
 git clone https://github.com/notional-labs/cosmprund
 cd cosmprund
 make build
 
-# run cosmprund 
-./build/cosmprund prune ~/.gaiad/data --app=cosmoshub --backend=pebbledb --blocks=362880 --versions=362880 --compact=true
+# run cosmos-pruner
+./build/cosmos-pruner prune ~/.gaiad/data --app=cosmoshub --backend=pebbledb --blocks=362880 --versions=362880 --compact=true
 ```
 
 Flags: 
 
-- `data-dir`: path to data directory if not default
-- `blocks`: amount of blocks to keep on the node (Default 10)
+- `data-dir`: path to data directory if not d efault
+- `blocks`: amount of blocks to keep on the node (Default 10000)
 - `versions`: amount of app state versions to keep on the node (Default 10)
 - `app`: deprecated! does not use for anything exccep some special chains.
 - `cosmos-sdk`: If pruning app state (Default true)

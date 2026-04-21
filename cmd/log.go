@@ -49,11 +49,26 @@ func logDebug(format string, args ...any) {
 	}
 }
 
-// logProgress emits a progress line. Always shows at info-level or above.
-func logProgress(label string, done, total int64) {
-	if currentLevel < levelInfo || total <= 0 {
+// logInline emits a debug-level message that overwrites the current line (no newline).
+// Caller must invoke logInlineEnd() once the iterating loop completes.
+func logInline(format string, args ...any) {
+	if currentLevel < levelDebug {
 		return
 	}
-	pct := float64(done) / float64(total) * 100
-	fmt.Printf("[PROG]  %s: %d / %d (%.1f%%)\n", label, done, total, pct)
+	fmt.Printf("\r\033[K[DEBUG] "+format, args...)
+}
+
+// logInlineEnd terminates an in-place line started by logInline.
+func logInlineEnd() {
+	if currentLevel >= levelDebug {
+		fmt.Println()
+	}
+}
+
+// pct returns done/total as a percentage, guarding against division by zero.
+func pct(done, total int64) float64 {
+	if total <= 0 {
+		return 0
+	}
+	return float64(done) / float64(total) * 100
 }
