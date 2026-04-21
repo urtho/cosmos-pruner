@@ -37,12 +37,6 @@ func pruneCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home := args[0]
 
-			if tx_idx {
-				if err := pruneTxIndex(home); err != nil {
-					logErr("tx_index pruning failed: %s", err.Error())
-				}
-			}
-
 			if tendermint {
 				if err := pruneTMData(home); err != nil {
 					logErr("tendermint pruning failed: %s", err.Error())
@@ -52,6 +46,12 @@ func pruneCmd() *cobra.Command {
 			if cosmosSdk {
 				if err := pruneAppState(home); err != nil {
 					logErr("app state pruning failed: %s", err.Error())
+				}
+			}
+
+			if tx_idx {
+				if err := pruneTxIndex(home); err != nil {
+					logErr("tx_index pruning failed: %s", err.Error())
 				}
 			}
 
